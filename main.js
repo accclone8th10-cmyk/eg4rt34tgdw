@@ -1,60 +1,108 @@
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-const WORLD = { width: 2000, height: 2000, baseRate: 10 };
-const LINH_CAN_MULT = 1.7; 
+// 1. Cấu hình
+const WORLD = { width: 3000, height: 3000, baseRate: 10 };
 const realms = [
-    { name: "Luyện Khí", need: 100, absorb: 1.0, color: "#4facfe" },
-    { name: "Trúc Cơ", need: 500, absorb: 1.3, color: "#00ff88" },
-    { name: "Kim Đan", need: 2000, absorb: 1.8, color: "#f6d365" }
+    { name: "Luyện Khí", need: 100, absorb: 1, color: "#4facfe", atk: 10 },
+    { name: "Trúc Cơ", need: 500, absorb: 1.5, color: "#00ff88", atk: 25 },
+    { name: "Kim Đan", need: 2000, absorb: 2.5, color: "#f6d365", atk: 60 }
 ];
 
 const mapImg = new Image();
 mapImg.src = 'map.png'; 
 
+// 2. Nhân vật & Quái vật
 let player = {
     x: WORLD.width / 2, y: WORLD.height / 2,
     size: 36, speed: 250, linhKhi: 0, realm: 0,
-    angle: 0, state: "idle"
+    hp: 100, maxHp: 100, angle: 0, state: "idle"
 };
+
+let mobs = [];
+function spawnMob() {
+    if (mobs.length < 15) { // Tối đa 15 con quái trên map
+        mobs.push({
+            x: Math.random() * WORLD.width,
+            y: Math.random() * WORLD.height,
+            hp: 40 + player.realm * 50,
+            maxHp: 40 + player.realm * 50,
+            size: 30,
+            speed: 80 + Math.random() * 50,
+            color: "#ff4757"
+        });
+    }
+}
+for(let i=0; i<10; i++) spawnMob(); // Khởi tạo quái
 
 const camera = { x: 0, y: 0 };
 const keys = {};
 
+// 3. Xử lý sự kiện
 window.addEventListener("keydown", e => {
     keys[e.key.toLowerCase()] = true;
     if (e.code === "Space") tryBreakthrough();
 });
 window.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
 
-canvas.addEventListener("mousedown", () => {
-    if (player.state !== "move") player.state = "cultivate";
-});
-canvas.addEventListener("mouseup", () => {
-    if (player.state === "cultivate") player.state = "idle";
-});
+canvas.addEventListener("mousedown", (e) => {
+    if (player.state === "move") {
+        // Tấn công quái khi click
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left + camera.x;
+        const mouseY = e.clientY - rect.top + camera.y;
 
+        mobs.forEach((mob, index) => {
+            let d = Math.hypot(mouseX - mob.x, mouseY - mob.y);
+            if (d < mob.size * 1.5) {
+                mob.hp -= realms[player.realm].atk;
+                if (mob.hp <= 0) {
+                    mobs.splice(index, 1);
+                    player.linhKhi += 20; // Thưởng khi giết quái
+                    spawnMob();
+                }
+            }
+        });
+    } else {
+        player.state = "cultivate";
+    }
+});
+canvas.addEventListener("mouseup", () => { if(player.state === "cultivate") player.state = "idle"; });
+
+// 4. Cập nhật logic
 function update(dt) {
+    // Di chuyển
     let dx = 0, dy = 0;
     if (keys["w"]) dy--; if (keys["s"]) dy++;
     if (keys["a"]) dx--; if (keys["d"]) dx++;
 
     if (dx !== 0 || dy !== 0) {
         const len = Math.hypot(dx, dy);
-        player.x = Math.max(0, Math.min(WORLD.width, player.x + (dx / len) * player.speed * dt));
-        player.y = Math.max(0, Math.min(WORLD.height, player.y + (dy / len) * player.speed * dt));
+        player.x = Math.max(0, Math.min(WORLD.width, player.x + (dx/len) * player.speed * dt));
+        player.y = Math.max(0, Math.min(WORLD.height, player.y + (dy/len) * player.speed * dt));
         player.state = "move";
-    } else if (player.state !== "cultivate") {
-        player.state = "idle";
-    }
+    } else if (player.state !== "cultivate") player.state = "idle";
 
-    const realm = realms[player.realm] || realms[realms.length - 1];
-    let gain = (player.state === "cultivate") ? 
-               (WORLD.baseRate * LINH_CAN_MULT * realm.absorb * 2) : 
-               (WORLD.baseRate * LINH_CAN_MULT * realm.absorb * 0.2);
-    
-    player.linhKhi += dt * gain;
-    player.angle += dt * (player.state === "cultivate" ? 3 : 1);
+    // AI Quái vật đuổi người
+    mobs.forEach(mob => {
+        let dist = Math.hypot(player.x - mob.x, player.y - mob.y);
+        if (dist < 400) { // Tầm nhìn của quái
+            let mdx = (player.x - mob.x) / dist;
+            let mdy = (player.y - mob.y) / dist;
+            mob.x += mdx * mob.speed * dt;
+            mob.y += mdy * mob.speed * dt;
+            if (dist < 30) player.hp -= 10 * dt; // Quái cắn
+        }
+    });
+
+    // Hồi máu nhẹ khi thiền
+    if (player.state === "cultivate" && player.hp < player.maxHp) player.hp += 5 * dt;
+
+    const realm = realms[player.realm];
+    let gain = (player.state === "cultivate") ? (WORLD.baseRate * realm.absorb * 3) : (WORLD.baseRate * 0.1);
+    player.linhKhi += gain * dt;
+    player.angle += dt;
+
     camera.x = player.x - canvas.width / 2;
     camera.y = player.y - canvas.height / 2;
 
@@ -65,12 +113,9 @@ function updateUI(gain, realm) {
     document.getElementById("level-display").innerText = `Cảnh giới: ${realm.name}`;
     document.getElementById("spirit-count").innerText = Math.floor(player.linhKhi);
     document.getElementById("speed-tag").innerText = `Linh tốc: +${gain.toFixed(1)}/s`;
-    document.getElementById("progress").style.width = Math.min((player.linhKhi / realm.need) * 100, 100) + "%";
-    
-    const stateEl = document.getElementById("state-display");
-    if (player.state === "move") stateEl.innerText = "Trạng thái: Hành tẩu";
-    else if (player.state === "cultivate") stateEl.innerText = "Trạng thái: Tu luyện";
-    else stateEl.innerText = "Trạng thái: Tĩnh tọa";
+    document.getElementById("progress").style.width = Math.min((player.linhKhi/realm.need)*100, 100) + "%";
+    document.getElementById("hp-bar").style.width = Math.max((player.hp / player.maxHp) * 100, 0) + "%";
+    document.getElementById("state-display").innerText = "Trạng thái: " + (player.state === "move" ? "Hành tẩu" : (player.state === "cultivate" ? "Tu luyện" : "Tĩnh tọa"));
 }
 
 function tryBreakthrough() {
@@ -78,29 +123,45 @@ function tryBreakthrough() {
     if (realm && player.linhKhi >= realm.need) {
         player.linhKhi = 0;
         player.realm++;
+        player.maxHp += 50;
+        player.hp = player.maxHp;
         canvas.style.filter = "brightness(2)";
         setTimeout(() => canvas.style.filter = "brightness(1)", 150);
     }
 }
 
+// 5. Vẽ
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const realm = realms[player.realm] || realms[realms.length - 1];
     ctx.save();
     ctx.translate(-camera.x, -camera.y);
 
+    // Vẽ Map
     if (mapImg.complete) ctx.drawImage(mapImg, 0, 0, WORLD.width, WORLD.height);
     else { ctx.fillStyle = "#1a2635"; ctx.fillRect(0, 0, WORLD.width, WORLD.height); }
 
+    // Vẽ Quái
+    mobs.forEach(mob => {
+        ctx.fillStyle = mob.color;
+        ctx.beginPath();
+        ctx.arc(mob.x, mob.y, mob.size, 0, Math.PI*2);
+        ctx.fill();
+        // Thanh máu quái
+        ctx.fillStyle = "red";
+        ctx.fillRect(mob.x - 15, mob.y - 40, (mob.hp/mob.maxHp)*30, 4);
+    });
+
+    // Vẽ Player
     ctx.save();
     ctx.translate(player.x, player.y);
     ctx.rotate(player.angle);
-    ctx.strokeStyle = realm.color;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(-player.size/2 - 5, -player.size/2 - 5, player.size + 10, player.size + 10);
+    ctx.strokeStyle = realms[player.realm].color;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(-20, -20, 40, 40);
     ctx.fillStyle = "white";
-    ctx.fillRect(-player.size/2, -player.size/2, player.size, player.size);
+    ctx.fillRect(-18, -18, 36, 36);
     ctx.restore();
+
     ctx.restore();
 }
 
@@ -110,9 +171,5 @@ function loop(time) {
     update(dt); draw();
     requestAnimationFrame(loop);
 }
-
-window.addEventListener("resize", () => {
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-});
 canvas.width = window.innerWidth; canvas.height = window.innerHeight;
 requestAnimationFrame(loop);
